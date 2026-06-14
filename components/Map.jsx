@@ -3,17 +3,17 @@
 import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { database } from '@/lib/firebase';
+import { ref, get, set } from 'firebase/database';
 import { STATUS_COLORS } from './FilterPanel';
 
 function getStatusColor(status) {
   if (!status) return '#9C27B0';
   
-  // Szukaj dokładnego match'u
   if (STATUS_COLORS[status]) {
     return STATUS_COLORS[status];
   }
   
-  // Szukaj zawierania
   for (const [key, color] of Object.entries(STATUS_COLORS)) {
     if (status.includes(key) || key.includes(status)) {
       return color;
@@ -32,7 +32,7 @@ export default function MapComponent({
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef({});
-  const geocachRef = useRef({});
+  const memoryGeoCache = useRef({});
   const [hoveredId, setHoveredId] = useState(null);
   const geocodingQueueRef = useRef([]);
   const isGeocodingRef = useRef(false);
@@ -50,18 +50,18 @@ export default function MapComponent({
     }
   }, []);
 
-  // Geocoding z cache'em i delay'em
+  // Geocoding z Firebase cache'em
   const geocodePostalCode = async (postalCode) => {
     return new Promise((resolve) => {
-      // Sprawdź cache
-      if (geocachRef.current[postalCode]) {
-        return resolve(geocachRef.current[postalCode]);
+      // Sprawdź memory cache
+      if (memoryGeoCache.current[postalCode]) {
+        return resolve(memoryGeoCache.current[postalCode]);
       }
 
       // Dodaj do kolejki
       geocodingQueueRef.current.push({ postalCode, resolve });
 
-      // Jeśli nie ma żadnego procesu geocodowania, uruchom
+      // Uruchom processing
       if (!isGeocodingRef.current) {
         processGeocodingQueue();
       }
@@ -75,6 +75,17 @@ export default function MapComponent({
       const { postalCode, resolve } = geocodingQueueRef.current.shift();
 
       try {
+        // 1. Sprawdź Firebase cache
+        const cacheRef = ref(database, `geocache/${postalCode}`);
+        const cacheSnapshot = await get(cacheRef);
+
+        if (cacheSnapshot.exists()) {
+          const coords = cacheSnapshot.val();
+          memoryGeoCache.current[postalCode] = coords;
+          return resolve(coords);
+        }
+
+        // 2. Jeśli nie ma w cache - geocoduj
         const response = await fetch(
           `https://nominatim.openstreetmap.org/search?format=json&postalcode=${postalCode}&countrycode=pl&limit=1`,
           {
@@ -88,7 +99,15 @@ export default function MapComponent({
           const data = await response.json();
           if (data.length > 0) {
             const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-            geocachRef.current[postalCode] = coords;
+            
+            // 3. Zapisz w Firebase cache
+            try {
+              await set(cacheRef, coords);
+            } catch (e) {
+              console.log('Firebase cache write failed');
+            }
+
+            memoryGeoCache.current[postalCode] = coords;
             resolve(coords);
           } else {
             resolve(null);
@@ -101,8 +120,8 @@ export default function MapComponent({
         resolve(null);
       }
 
-      // Delay 1 sekunda między requestami aby uniknąć rate-limitowania
-      await new Promise(r => setTimeout(r, 1000));
+      // Delay 1.5 sekundy między requestami
+      await new Promise(r => setTimeout(r, 1500));
     }
 
     isGeocodingRef.current = false;
