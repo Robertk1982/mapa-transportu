@@ -30,7 +30,6 @@ export default function Home() {
   const fileInputRef = useRef(null);
   const dateInputsRef = useRef({});
 
-  // Sprawdź login
   useEffect(() => {
     const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
       if (currentUser) {
@@ -46,7 +45,6 @@ export default function Home() {
     return unsubscribe;
   }, []);
 
-  // Ładuj zamówienia
   useEffect(() => {
     if (!user) return;
 
@@ -55,12 +53,8 @@ export default function Home() {
       if (snapshot.exists()) {
         const ordersData = snapshot.val();
         setOrders(ordersData);
-        
-        // Zbierz unikalne statusy
         const allStatuses = [...new Set(
-          Object.values(ordersData)
-            .map(o => o.status)
-            .filter(Boolean)
+          Object.values(ordersData).map(o => o.status).filter(Boolean)
         )];
         setSelectedStatuses(allStatuses);
       } else {
@@ -216,15 +210,12 @@ export default function Home() {
 
   const handleToggleOrder = async (id) => {
     const newHidden = new Set(hiddenOrders);
-    if (newHidden.has(id)) {
-      newHidden.delete(id);
-    } else {
-      newHidden.add(id);
-      const order = orders[id];
-      await set(ref(database, `archived/${id}`), order);
-    }
+    newHidden.add(id);
+    const order = orders[id];
+    await set(ref(database, `archived/${id}`), order);
     setHiddenOrders(newHidden);
-    await update(ref(database, 'hidden'), { [id]: newHidden.has(id) });
+    await update(ref(database, 'hidden'), { [id]: true });
+    showNotification(`🗂️ Zamówienie ${id} przeniesione do archiwum`);
   };
 
   if (!user) {
@@ -235,13 +226,14 @@ export default function Home() {
     return <AdminPanel currentUser={user} onLogout={handleLogout} />;
   }
 
-  // Filtruj zamówienia - NAPRAWIONE
+  // Filtruj zamówienia - UKRYJ ZARCHIWIZOWANE
   const filteredOrders = Object.fromEntries(
     Object.entries(orders).filter(([id, order]) => {
-      // Filtr wyszukiwania
+      // Ukryj zarchiwizowane - ZNIKAJĄ z listy
+      if (hiddenOrders.has(id)) return false;
+
       if (searchId && !id.includes(searchId)) return false;
       
-      // Filtr transportu - ZAWSZE STOSUJ
       const transport = order.transport || '';
       const isDedykowana = transport.includes('Dostawa dedykowana');
       const isPaletowa = !isDedykowana && transport.includes('paletowa');
@@ -253,7 +245,6 @@ export default function Home() {
       });
       if (!matchesTransport) return false;
 
-      // Filtr statusu - ZAWSZE STOSUJ
       if (!selectedStatuses.includes(order.status)) return false;
 
       return true;
@@ -285,44 +276,20 @@ export default function Home() {
               {userRole?.role === 'admin' && (
                 <button
                   onClick={() => setShowAdmin(!showAdmin)}
-                  style={{
-                    padding: '6px 12px',
-                    background: '#9C27B0',
-                    color: 'white',
-                    border: 'none',
-                    borderRadius: '4px',
-                    cursor: 'pointer',
-                    fontSize: '11px'
-                  }}
+                  style={{ padding: '6px 12px', background: '#9C27B0', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
                 >
                   ⚙️
                 </button>
               )}
               <button
                 onClick={() => setShowArchive(true)}
-                style={{
-                  padding: '6px 12px',
-                  background: '#FF9800',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '11px'
-                }}
+                style={{ padding: '6px 12px', background: '#FF9800', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
               >
                 🗂️
               </button>
               <button
                 onClick={handleLogout}
-                style={{
-                  padding: '6px 12px',
-                  background: '#F44336',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '4px',
-                  cursor: 'pointer',
-                  fontSize: '11px'
-                }}
+                style={{ padding: '6px 12px', background: '#F44336', color: 'white', border: 'none', borderRadius: '4px', cursor: 'pointer', fontSize: '11px' }}
               >
                 🚪
               </button>
@@ -332,29 +299,12 @@ export default function Home() {
           {(userRole?.canUpload || userRole?.role === 'admin') && (
             <button
               onClick={() => fileInputRef.current?.click()}
-              style={{
-                width: '100%',
-                padding: '10px',
-                background: '#2196F3',
-                color: 'white',
-                border: 'none',
-                borderRadius: '6px',
-                cursor: 'pointer',
-                fontWeight: 500,
-                fontSize: '13px',
-                marginBottom: '12px'
-              }}
+              style={{ width: '100%', padding: '10px', background: '#2196F3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontWeight: 500, fontSize: '13px', marginBottom: '12px' }}
             >
               📥 Wczytaj XLS
             </button>
           )}
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept=".xlsx,.xls"
-            onChange={handleFileUpload}
-            style={{ display: 'none' }}
-          />
+          <input ref={fileInputRef} type="file" accept=".xlsx,.xls" onChange={handleFileUpload} style={{ display: 'none' }} />
         </div>
 
         <div style={{ padding: '12px', borderBottom: '1px solid #e0e0e0', background: '#F9F9F9', overflowY: 'auto', maxHeight: '200px' }}>
@@ -375,58 +325,48 @@ export default function Home() {
               Brak zamówień spełniających kryteria
             </div>
           ) : (
-            Object.entries(filteredOrders).map(([id, order]) => {
-              const isHidden = hiddenOrders.has(id);
-              return (
-                <div
-                  key={id}
-                  style={{
-                    padding: '12px 14px',
-                    borderBottom: '1px solid #e0e0e0',
-                    display: 'flex',
-                    gap: '10px',
-                    alignItems: 'flex-start',
-                    opacity: isHidden ? 0.4 : 1,
-                    background: isHidden ? '#f5f5f5' : 'white',
-                  }}
-                >
-                  <input
-                    type="checkbox"
-                    checked={isHidden}
-                    onChange={() => handleToggleOrder(id)}
-                    style={{ marginTop: '4px', width: '18px', height: '18px', cursor: 'pointer' }}
-                  />
-                  <div style={{ flex: 1, fontSize: '12px' }}>
-                    <div style={{ fontWeight: 500, marginBottom: '4px', color: '#000' }}>{id}</div>
-                    <div
-                      style={{
-                        display: 'inline-block',
-                        padding: '2px 6px',
-                        borderRadius: '3px',
-                        fontSize: '10px',
-                        fontWeight: 500,
-                        marginBottom: '4px',
-                        background: (STATUS_COLORS[order.status] || '#9C27B0') + '20',
-                        color: STATUS_COLORS[order.status] || '#9C27B0',
-                        border: `1px solid ${STATUS_COLORS[order.status] || '#9C27B0'}40`,
-                        maxWidth: '100%',
-                        wordBreak: 'break-word'
-                      }}
-                    >
-                      {order.status?.substring(0, 30)}
-                    </div>
-                    <div style={{ color: '#666', fontSize: '11px', lineHeight: '1.5', marginTop: '4px' }}>
-                      📍 {order.zip}<br />
-                      📅 {order.date || '-'}<br/>
-                      📦 {order.transport?.includes('Dostawa dedykowana') ? 'Dedykowana' : 'Paletowa'}
-                      <span style={{ display: 'block', color: '#2196F3', fontWeight: 500, marginTop: '2px' }}>
-                        💰 {parseFloat(String(order.value).replace(',', '.')).toFixed(2)} PLN
-                      </span>
-                    </div>
+            Object.entries(filteredOrders).map(([id, order]) => (
+              <div
+                key={id}
+                style={{ padding: '12px 14px', borderBottom: '1px solid #e0e0e0', display: 'flex', gap: '10px', alignItems: 'flex-start', background: 'white' }}
+              >
+                <input
+                  type="checkbox"
+                  checked={false}
+                  onChange={() => handleToggleOrder(id)}
+                  title="Przenieś do archiwum"
+                  style={{ marginTop: '4px', width: '18px', height: '18px', cursor: 'pointer' }}
+                />
+                <div style={{ flex: 1, fontSize: '12px' }}>
+                  <div style={{ fontWeight: 500, marginBottom: '4px', color: '#000' }}>{id}</div>
+                  <div
+                    style={{
+                      display: 'inline-block',
+                      padding: '2px 6px',
+                      borderRadius: '3px',
+                      fontSize: '10px',
+                      fontWeight: 500,
+                      marginBottom: '4px',
+                      background: (STATUS_COLORS[order.status] || '#9C27B0') + '20',
+                      color: STATUS_COLORS[order.status] || '#9C27B0',
+                      border: `1px solid ${STATUS_COLORS[order.status] || '#9C27B0'}40`,
+                      maxWidth: '100%',
+                      wordBreak: 'break-word'
+                    }}
+                  >
+                    {order.status?.substring(0, 30)}
+                  </div>
+                  <div style={{ color: '#666', fontSize: '11px', lineHeight: '1.5', marginTop: '4px' }}>
+                    📍 {order.zip}<br />
+                    📅 {order.date || '-'}<br/>
+                    📦 {order.transport?.includes('Dostawa dedykowana') ? 'Dedykowana' : 'Paletowa'}
+                    <span style={{ display: 'block', color: '#2196F3', fontWeight: 500, marginTop: '2px' }}>
+                      💰 {parseFloat(String(order.value).replace(',', '.')).toFixed(2)} PLN
+                    </span>
                   </div>
                 </div>
-              );
-            })
+              </div>
+            ))
           )}
         </div>
       </div>
@@ -442,45 +382,15 @@ export default function Home() {
                   <div style={{ marginBottom: '6px', fontWeight: 500, fontSize: '12px' }}>{order.id}</div>
                   <input
                     type="date"
-                    ref={(el) => {
-                      if (el) dateInputsRef.current[order.id] = el;
-                    }}
+                    ref={(el) => { if (el) dateInputsRef.current[order.id] = el; }}
                     style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '13px', boxSizing: 'border-box' }}
                   />
                 </div>
               ))}
             </div>
             <div style={{ display: 'flex', gap: '12px' }}>
-              <button
-                onClick={() => setShowDateModal(false)}
-                style={{
-                  flex: 1,
-                  padding: '10px',
-                  border: '1px solid #ddd',
-                  background: 'white',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                }}
-              >
-                Pomiń
-              </button>
-              <button
-                onClick={handleConfirmDates}
-                style={{
-                  flex: 1,
-                  padding: '10px',
-                  background: '#2196F3',
-                  color: 'white',
-                  border: 'none',
-                  borderRadius: '6px',
-                  cursor: 'pointer',
-                  fontSize: '13px',
-                  fontWeight: 500,
-                }}
-              >
-                Potwierdź
-              </button>
+              <button onClick={() => setShowDateModal(false)} style={{ flex: 1, padding: '10px', border: '1px solid #ddd', background: 'white', borderRadius: '6px', cursor: 'pointer', fontSize: '13px' }}>Pomiń</button>
+              <button onClick={handleConfirmDates} style={{ flex: 1, padding: '10px', background: '#2196F3', color: 'white', border: 'none', borderRadius: '6px', cursor: 'pointer', fontSize: '13px', fontWeight: 500 }}>Potwierdź</button>
             </div>
           </div>
         </div>
@@ -489,34 +399,15 @@ export default function Home() {
       {showArchive && <Archive onClose={() => setShowArchive(false)} />}
 
       {notification && (
-        <div
-          style={{
-            position: 'fixed',
-            top: '16px',
-            right: '16px',
-            background: '#4CAF50',
-            color: 'white',
-            padding: '12px 16px',
-            borderRadius: '6px',
-            fontSize: '13px',
-            zIndex: 999,
-            animation: 'slideIn 0.3s ease-out',
-          }}
-        >
+        <div style={{ position: 'fixed', top: '16px', right: '16px', background: '#4CAF50', color: 'white', padding: '12px 16px', borderRadius: '6px', fontSize: '13px', zIndex: 999, animation: 'slideIn 0.3s ease-out' }}>
           {notification}
         </div>
       )}
 
       <style>{`
         @keyframes slideIn {
-          from {
-            transform: translateX(400px);
-            opacity: 0;
-          }
-          to {
-            transform: translateX(0);
-            opacity: 1;
-          }
+          from { transform: translateX(400px); opacity: 0; }
+          to { transform: translateX(0); opacity: 1; }
         }
       `}</style>
     </div>
