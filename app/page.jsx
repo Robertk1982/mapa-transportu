@@ -244,7 +244,7 @@ export default function Home() {
       // Filtr transportu - ZAWSZE STOSUJ
       const transport = order.transport || '';
       const isDedykowana = transport.includes('Dostawa dedykowana');
-      const isPaletowa = transport.includes('paletowa');
+      const isPaletowa = !isDedykowana && transport.includes('paletowa');
       
       const matchesTransport = selectedTransports.some(t => {
         if (t === 'Dostawa dedykowana Flexmeble') return isDedykowana;
