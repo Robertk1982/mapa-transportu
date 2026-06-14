@@ -7,8 +7,6 @@ import { database } from '@/lib/firebase';
 import { ref, get, set } from 'firebase/database';
 import { STATUS_COLORS } from './FilterPanel';
 
-const OPENCAGE_API_KEY = '99f668e465b04f1eaffd9b4360bd1f47';
-
 function getStatusColor(status) {
   if (!status) return '#9C27B0';
   
@@ -38,6 +36,7 @@ export default function MapComponent({
   const [hoveredId, setHoveredId] = useState(null);
   const geocodingQueueRef = useRef([]);
   const isGeocodingRef = useRef(false);
+  const lastRequestTimeRef = useRef(0);
 
   // Inicjalizuj mapę
   useEffect(() => {
@@ -52,7 +51,7 @@ export default function MapComponent({
     }
   }, []);
 
-  // Geocoding z Open Cage + Firebase cache
+  // Geocoding z Nominatim + Firebase cache + BIG DELAYS
   const geocodePostalCode = async (postalCode) => {
     return new Promise((resolve) => {
       // Sprawdź memory cache
@@ -87,19 +86,30 @@ export default function MapComponent({
           return resolve(coords);
         }
 
-        // 2. Jeśli nie ma w cache - użyj Open Cage Geocoding API
+        // 2. Czekaj aby nie przekroczyć rate-limit Nominatim (2 sekundy między requestami)
+        const now = Date.now();
+        const timeSinceLastRequest = now - lastRequestTimeRef.current;
+        if (timeSinceLastRequest < 2000) {
+          await new Promise(r => setTimeout(r, 2000 - timeSinceLastRequest));
+        }
+        lastRequestTimeRef.current = Date.now();
+
+        // 3. Geocoduj z Nominatim
         const response = await fetch(
-          `https://api.opencagedata.com/geocode/v1/json?q=${postalCode},Poland&key=${OPENCAGE_API_KEY}`
+          `https://nominatim.openstreetmap.org/search?format=json&postalcode=${postalCode}&countrycode=pl&limit=1`,
+          {
+            headers: {
+              'User-Agent': 'FlexmebleMap/1.0 (contact@flexmeble.com)'
+            }
+          }
         );
 
         if (response.ok) {
           const data = await response.json();
-          
-          if (data.results && data.results.length > 0) {
-            const geometry = data.results[0].geometry;
-            const coords = { lat: geometry.lat, lng: geometry.lng };
+          if (data.length > 0) {
+            const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
             
-            // 3. Zapisz w Firebase cache
+            // 4. Zapisz w Firebase cache
             try {
               await set(cacheRef, coords);
             } catch (e) {
@@ -112,16 +122,13 @@ export default function MapComponent({
             resolve(null);
           }
         } else {
-          console.log('Open Cage API error');
+          console.log('Nominatim error for', postalCode, 'status:', response.status);
           resolve(null);
         }
       } catch (e) {
         console.log('Geocoding error for', postalCode);
         resolve(null);
       }
-
-      // Delay 0.3 sekundy między requestami
-      await new Promise(r => setTimeout(r, 300));
     }
 
     isGeocodingRef.current = false;
