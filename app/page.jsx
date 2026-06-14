@@ -53,9 +53,19 @@ export default function Home() {
     const ordersRef = ref(database, 'orders');
     const unsubscribeOrders = onValue(ordersRef, (snapshot) => {
       if (snapshot.exists()) {
-        setOrders(snapshot.val());
+        const ordersData = snapshot.val();
+        setOrders(ordersData);
+        
+        // Zbierz unikalne statusy
+        const allStatuses = [...new Set(
+          Object.values(ordersData)
+            .map(o => o.status)
+            .filter(Boolean)
+        )];
+        setSelectedStatuses(allStatuses);
       } else {
         setOrders({});
+        setSelectedStatuses([]);
       }
       setLoading(false);
     });
@@ -69,10 +79,6 @@ export default function Home() {
         setHiddenOrders(new Set());
       }
     });
-
-    // Inicjalizuj statusy
-    const allStatuses = [...new Set(Object.values(snapshot?.val() || {}).map(o => o.status).filter(Boolean))];
-    setSelectedStatuses(allStatuses);
 
     return () => {
       unsubscribeOrders();
