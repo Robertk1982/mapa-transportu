@@ -1,9 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { signInWithEmailAndPassword, createUserWithEmailAndPassword } from 'firebase/auth';
+import { signInWithEmailAndPassword } from 'firebase/auth';
 import { auth, database } from '@/lib/firebase';
-import { ref, set, get } from 'firebase/database';
+import { ref, get } from 'firebase/database';
 
 export default function Login({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
@@ -19,15 +19,12 @@ export default function Login({ onLoginSuccess }) {
     try {
       const userCredential = await signInWithEmailAndPassword(auth, email, password);
       const user = userCredential.user;
-      
-      // Pobierz role użytkownika
       const userRef = ref(database, `users/${user.uid}`);
       const snapshot = await get(userRef);
       const userData = snapshot.val();
-      
       onLoginSuccess(user, userData);
     } catch (err) {
-      setError(err.message === 'Firebase: Error (auth/user-not-found).' ? 'Użytkownik nie znaleziony' : 'Błąd logowania');
+      setError('Nieprawidłowy email lub hasło');
     } finally {
       setLoading(false);
     }
@@ -63,7 +60,7 @@ export default function Login({ onLoginSuccess }) {
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
-              placeholder="admin@flexmeble.com"
+              placeholder="Wpisz email"
               style={{
                 width: '100%',
                 padding: '12px',
@@ -84,7 +81,7 @@ export default function Login({ onLoginSuccess }) {
               type="password"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
-              placeholder="••••••••"
+              placeholder="Wpisz hasło"
               style={{
                 width: '100%',
                 padding: '12px',
@@ -129,20 +126,6 @@ export default function Login({ onLoginSuccess }) {
             {loading ? 'Logowanie...' : 'Zaloguj się'}
           </button>
         </form>
-
-        <div style={{
-          marginTop: '20px',
-          padding: '16px',
-          background: '#F5F5F5',
-          borderRadius: '6px',
-          fontSize: '12px',
-          color: '#666',
-          lineHeight: '1.6'
-        }}>
-          <strong>Dane testowe:</strong><br/>
-          Email: admin@flexmeble.com<br/>
-          Hasło: Admin123!
-        </div>
       </div>
     </div>
   );
