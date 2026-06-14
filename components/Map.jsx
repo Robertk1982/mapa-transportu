@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
+import { database } from '@/lib/firebase';
+import { ref, get } from 'firebase/database';
 
-// ALL 11 STATUSES + COLORS
 const statusColorMap = {
   '! !Dostawa dedykowana coraz bliżej. Finiszujemy z produkcją.': '#FFC107',
   '! !Dostawa paletowa coraz bliżej. Finiszujemy z produkcją.': '#FFC107',
@@ -23,12 +24,10 @@ const statusColorMap = {
 function getStatusColor(status) {
   if (!status) return statusColorMap.default;
   
-  // Exact match first
   if (statusColorMap[status]) {
     return statusColorMap[status];
   }
   
-  // Partial match
   for (const [key, color] of Object.entries(statusColorMap)) {
     if (key !== 'default' && status.includes(key)) {
       return color;
@@ -36,12 +35,6 @@ function getStatusColor(status) {
   }
   
   return statusColorMap.default;
-}
-
-function isOverdue(dateStr) {
-  if (!dateStr) return false;
-  const date = new Date(dateStr);
-  return date < new Date();
 }
 
 export default function MapComponent({ 
@@ -53,9 +46,28 @@ export default function MapComponent({
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef({});
-  const geocachRef = useRef({});
+  const geocacheRef = useRef({});
+  const [loading, setLoading] = useState(true);
 
-  // Initialize map
+  // Załaduj geocache z Firebase
+  useEffect(() => {
+    const loadGeocache = async () => {
+      try {
+        const cacheSnapshot = await get(ref(database, 'geocache'));
+        if (cacheSnapshot.exists()) {
+          geocacheRef.current = cacheSnapshot.val();
+        }
+      } catch (e) {
+        console.log('Failed to load geocache');
+      } finally {
+        setLoading(false);
+      }
+    };
+
+    loadGeocache();
+  }, []);
+
+  // Inicjalizuj mapę
   useEffect(() => {
     if (!mapRef.current) return;
 
@@ -68,47 +80,24 @@ export default function MapComponent({
     }
   }, []);
 
-  const geocodePostalCode = async (postalCode) => {
-    if (geocachRef.current[postalCode]) {
-      return geocachRef.current[postalCode];
-    }
-
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&postalcode=${postalCode}&countrycode=pl&limit=1`,
-        {
-          headers: {
-            'User-Agent': 'FlexmebleMap/1.0 (contact@flexmeble.com)'
-          }
-        }
-      );
-      const data = await response.json();
-      if (data.length > 0) {
-        const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-        geocachRef.current[postalCode] = coords;
-        return coords;
-      }
-    } catch (e) {
-      console.log('Geocoding error for', postalCode);
-    }
-    return null;
-  };
-
+  // Aktualizuj mapę gdy się załaduje geocache
   useEffect(() => {
+    if (loading) return;
+
     const updateMap = async () => {
       if (!mapInstanceRef.current) return;
 
-      // Remove old markers
+      // Usuń stare markery
       Object.values(markersRef.current).forEach((m) => {
         mapInstanceRef.current.removeLayer(m.marker);
       });
       markersRef.current = {};
 
-      // Process orders
+      // Przetwórz zamówienia
       for (const [id, order] of Object.entries(orders || {})) {
         if (hiddenOrders.has(id)) continue;
 
-        // FILTER: Transport
+        // Filtry transportu
         if (selectedTransports.length > 0) {
           const matchesTransport = selectedTransports.some(t => 
             (t === 'Dostawa dedykowana Flexmeble' && order.transport?.includes('Dostawa dedykowana')) ||
@@ -117,27 +106,23 @@ export default function MapComponent({
           if (!matchesTransport) continue;
         }
 
-        // FILTER: Status
+        // Filtry statusu
         if (selectedStatuses.length > 0) {
-          const matchesStatus = selectedStatuses.includes(order.status);
-          if (!matchesStatus) continue;
+          if (!selectedStatuses.includes(order.status)) continue;
         }
 
-        // Geocode
-        const coords = await geocodePostalCode(order.zip);
+        // Pobierz współrzędne z cache'u
+        const coords = geocacheRef.current[order.zip];
         if (!coords) continue;
 
-        // Color
-        const color = isOverdue(order.date) ? '#F44336' : getStatusColor(order.status);
-
-        // Icon
+        // Utwórz marker
+        const color = getStatusColor(order.status);
         const customIcon = L.divIcon({
           html: `<div style="background: ${color}; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; text-align: center; padding: 2px; box-shadow: 0 2px 6px rgba(0,0,0,0.25); border: 2px solid white; overflow: hidden;">${id}</div>`,
           iconSize: [40, 40],
           className: 'custom-icon',
         });
 
-        // Marker
         const marker = L.marker([coords.lat, coords.lng], { icon: customIcon }).addTo(mapInstanceRef.current);
 
         const transportDisplay = order.transport?.includes('Dostawa dedykowana') 
@@ -161,7 +146,15 @@ export default function MapComponent({
     };
 
     updateMap();
-  }, [orders, hiddenOrders, selectedTransports, selectedStatuses]);
+  }, [orders, hiddenOrders, selectedTransports, selectedStatuses, loading]);
+
+  if (loading) {
+    return (
+      <div style={{ width: '100%', height: '100%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+        <div style={{ fontSize: '14px', color: '#999' }}>⏳ Ładowanie mapy...</div>
+      </div>
+    );
+  }
 
   return <div ref={mapRef} style={{ width: '100%', height: '100%' }} />;
 }
