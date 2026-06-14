@@ -1,44 +1,61 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef } from 'react';
 import L from 'leaflet';
 import 'leaflet/dist/leaflet.css';
-import { database } from '@/lib/firebase';
-import { ref, get, set } from 'firebase/database';
-import { STATUS_COLORS } from './FilterPanel';
+
+// ALL 11 STATUSES + COLORS
+const statusColorMap = {
+  '! !Dostawa dedykowana coraz bliżej. Finiszujemy z produkcją.': '#FFC107',
+  '! !Dostawa paletowa coraz bliżej. Finiszujemy z produkcją.': '#FFC107',
+  '! Dostawa dedykowana o krok. Produkcja zakończona sukcesem.': '#4CAF50',
+  '! Dostawa paletowa - Odpowiedz na wiadomość': '#2196F3',
+  '! Płatność została poprawnie zaksięgowana': '#4CAF50',
+  '! Twoje zamówienie zostało przekazane do realizacji': '#FF9800',
+  'AA_Corpus (realizacja)': '#FF9800',
+  'AA_Wydane na produkcje (realizacja)': '#FFC107',
+  'Payment received (Tpay)': '#4CAF50',
+  'Płatność przyjęta': '#4CAF50',
+  'Płatność zaakceptowana': '#4CAF50',
+  'default': '#9C27B0',
+};
 
 function getStatusColor(status) {
-  if (!status) return '#9C27B0';
+  if (!status) return statusColorMap.default;
   
-  if (STATUS_COLORS[status]) {
-    return STATUS_COLORS[status];
+  // Exact match first
+  if (statusColorMap[status]) {
+    return statusColorMap[status];
   }
   
-  for (const [key, color] of Object.entries(STATUS_COLORS)) {
-    if (status.includes(key) || key.includes(status)) {
+  // Partial match
+  for (const [key, color] of Object.entries(statusColorMap)) {
+    if (key !== 'default' && status.includes(key)) {
       return color;
     }
   }
   
-  return '#9C27B0';
+  return statusColorMap.default;
+}
+
+function isOverdue(dateStr) {
+  if (!dateStr) return false;
+  const date = new Date(dateStr);
+  return date < new Date();
 }
 
 export default function MapComponent({ 
   orders, 
-  hiddenOrders, 
-  selectedTransports,
-  selectedStatuses 
+  hiddenOrders,
+  selectedTransports = [],
+  selectedStatuses = []
 }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef({});
-  const memoryGeoCache = useRef({});
-  const [hoveredId, setHoveredId] = useState(null);
-  const geocodingQueueRef = useRef([]);
-  const isGeocodingRef = useRef(false);
-  const lastRequestTimeRef = useRef(0);
+  const geocachRef = useRef({});
 
-  // Inicjalizuj mapę
+  // Initialize map
   useEffect(() => {
     if (!mapRef.current) return;
 
@@ -51,107 +68,47 @@ export default function MapComponent({
     }
   }, []);
 
-  // Geocoding z Nominatim + Firebase cache + BIG DELAYS
   const geocodePostalCode = async (postalCode) => {
-    return new Promise((resolve) => {
-      // Sprawdź memory cache
-      if (memoryGeoCache.current[postalCode]) {
-        return resolve(memoryGeoCache.current[postalCode]);
-      }
-
-      // Dodaj do kolejki
-      geocodingQueueRef.current.push({ postalCode, resolve });
-
-      // Uruchom processing
-      if (!isGeocodingRef.current) {
-        processGeocodingQueue();
-      }
-    });
-  };
-
-  const processGeocodingQueue = async () => {
-    isGeocodingRef.current = true;
-
-    while (geocodingQueueRef.current.length > 0) {
-      const { postalCode, resolve } = geocodingQueueRef.current.shift();
-
-      try {
-        // 1. Sprawdź Firebase cache
-        const cacheRef = ref(database, `geocache/${postalCode}`);
-        const cacheSnapshot = await get(cacheRef);
-
-        if (cacheSnapshot.exists()) {
-          const coords = cacheSnapshot.val();
-          memoryGeoCache.current[postalCode] = coords;
-          return resolve(coords);
-        }
-
-        // 2. Czekaj aby nie przekroczyć rate-limit Nominatim (2 sekundy między requestami)
-        const now = Date.now();
-        const timeSinceLastRequest = now - lastRequestTimeRef.current;
-        if (timeSinceLastRequest < 2000) {
-          await new Promise(r => setTimeout(r, 2000 - timeSinceLastRequest));
-        }
-        lastRequestTimeRef.current = Date.now();
-
-        // 3. Geocoduj z Nominatim
-        const response = await fetch(
-          `https://nominatim.openstreetmap.org/search?format=json&postalcode=${postalCode}&countrycode=pl&limit=1`,
-          {
-            headers: {
-              'User-Agent': 'FlexmebleMap/1.0 (contact@flexmeble.com)'
-            }
-          }
-        );
-
-        if (response.ok) {
-          const data = await response.json();
-          if (data.length > 0) {
-            const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-            
-            // 4. Zapisz w Firebase cache
-            try {
-              await set(cacheRef, coords);
-            } catch (e) {
-              console.log('Firebase cache write failed');
-            }
-
-            memoryGeoCache.current[postalCode] = coords;
-            resolve(coords);
-          } else {
-            resolve(null);
-          }
-        } else {
-          console.log('Nominatim error for', postalCode, 'status:', response.status);
-          resolve(null);
-        }
-      } catch (e) {
-        console.log('Geocoding error for', postalCode);
-        resolve(null);
-      }
+    if (geocachRef.current[postalCode]) {
+      return geocachRef.current[postalCode];
     }
 
-    isGeocodingRef.current = false;
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=json&postalcode=${postalCode}&countrycode=pl&limit=1`,
+        {
+          headers: {
+            'User-Agent': 'FlexmebleMap/1.0 (contact@flexmeble.com)'
+          }
+        }
+      );
+      const data = await response.json();
+      if (data.length > 0) {
+        const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+        geocachRef.current[postalCode] = coords;
+        return coords;
+      }
+    } catch (e) {
+      console.log('Geocoding error for', postalCode);
+    }
+    return null;
   };
 
-  // Aktualizuj mapę
   useEffect(() => {
     const updateMap = async () => {
       if (!mapInstanceRef.current) return;
 
-      // Usuń stare markery
+      // Remove old markers
       Object.values(markersRef.current).forEach((m) => {
         mapInstanceRef.current.removeLayer(m.marker);
       });
       markersRef.current = {};
 
-      // Przetwórz wszystkie zamówienia
-      const ordersToProcess = [];
-
+      // Process orders
       for (const [id, order] of Object.entries(orders || {})) {
         if (hiddenOrders.has(id)) continue;
 
-        // Filtry
+        // FILTER: Transport
         if (selectedTransports.length > 0) {
           const matchesTransport = selectedTransports.some(t => 
             (t === 'Dostawa dedykowana Flexmeble' && order.transport?.includes('Dostawa dedykowana')) ||
@@ -160,46 +117,27 @@ export default function MapComponent({
           if (!matchesTransport) continue;
         }
 
-        if (selectedStatuses.length > 0 && !selectedStatuses.includes(order.status)) {
-          continue;
+        // FILTER: Status
+        if (selectedStatuses.length > 0) {
+          const matchesStatus = selectedStatuses.includes(order.status);
+          if (!matchesStatus) continue;
         }
 
-        ordersToProcess.push({ id, order });
-      }
-
-      // Geocoduj i dodaj markery
-      for (const { id, order } of ordersToProcess) {
+        // Geocode
         const coords = await geocodePostalCode(order.zip);
         if (!coords) continue;
 
-        const color = getStatusColor(order.status);
-        const isHovered = hoveredId === id;
+        // Color
+        const color = isOverdue(order.date) ? '#F44336' : getStatusColor(order.status);
 
+        // Icon
         const customIcon = L.divIcon({
-          html: `<div style="
-            background: ${color}; 
-            color: white; 
-            width: ${isHovered ? '50px' : '40px'}; 
-            height: ${isHovered ? '50px' : '40px'}; 
-            border-radius: 50%; 
-            display: flex; 
-            align-items: center; 
-            justify-content: center; 
-            font-size: ${isHovered ? '12px' : '11px'}; 
-            font-weight: bold; 
-            text-align: center; 
-            padding: 2px; 
-            box-shadow: 0 2px 6px rgba(0,0,0,0.25), ${isHovered ? `0 0 0 3px ${color}40` : ''}; 
-            border: 2px solid white; 
-            overflow: hidden;
-            transition: all 0.2s;
-            cursor: pointer;
-            word-break: break-word;
-          ">${id}</div>`,
-          iconSize: [isHovered ? 50 : 40, isHovered ? 50 : 40],
+          html: `<div style="background: ${color}; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: bold; text-align: center; padding: 2px; box-shadow: 0 2px 6px rgba(0,0,0,0.25); border: 2px solid white; overflow: hidden;">${id}</div>`,
+          iconSize: [40, 40],
           className: 'custom-icon',
         });
 
+        // Marker
         const marker = L.marker([coords.lat, coords.lng], { icon: customIcon }).addTo(mapInstanceRef.current);
 
         const transportDisplay = order.transport?.includes('Dostawa dedykowana') 
@@ -207,7 +145,7 @@ export default function MapComponent({
           : '📫 Paletowa';
 
         const popupContent = `
-          <div style="font-size: 12px; min-width: 200px;">
+          <div style="font-size: 12px; width: 200px;">
             <strong style="font-size: 13px; display: block; margin-bottom: 8px;">${id}</strong>
             <div style="margin-bottom: 4px;"><strong>Status:</strong> ${order.status || 'Brak'}</div>
             <div style="margin-bottom: 4px;"><strong>Transport:</strong> ${transportDisplay}</div>
@@ -218,16 +156,12 @@ export default function MapComponent({
         `;
         marker.bindPopup(popupContent);
 
-        // Hover effect
-        marker.on('mouseover', () => setHoveredId(id));
-        marker.on('mouseout', () => setHoveredId(null));
-
         markersRef.current[id] = { marker, coords };
       }
     };
 
     updateMap();
-  }, [orders, hiddenOrders, selectedTransports, selectedStatuses, hoveredId]);
+  }, [orders, hiddenOrders, selectedTransports, selectedStatuses]);
 
   return <div ref={mapRef} style={{ width: '100%', height: '100%' }} />;
 }
