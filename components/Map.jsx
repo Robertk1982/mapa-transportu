@@ -7,11 +7,19 @@ import { STATUS_COLORS } from './FilterPanel';
 
 function getStatusColor(status) {
   if (!status) return '#9C27B0';
+  
+  // Szukaj dokładnego match'u
+  if (STATUS_COLORS[status]) {
+    return STATUS_COLORS[status];
+  }
+  
+  // Szukaj zawierania
   for (const [key, color] of Object.entries(STATUS_COLORS)) {
     if (status.includes(key) || key.includes(status)) {
       return color;
     }
   }
+  
   return '#9C27B0';
 }
 
@@ -26,7 +34,10 @@ export default function MapComponent({
   const markersRef = useRef({});
   const geocachRef = useRef({});
   const [hoveredId, setHoveredId] = useState(null);
+  const geocodingQueueRef = useRef([]);
+  const isGeocodingRef = useRef(false);
 
+  // Inicjalizuj mapę
   useEffect(() => {
     if (!mapRef.current) return;
 
@@ -39,34 +50,77 @@ export default function MapComponent({
     }
   }, []);
 
+  // Geocoding z cache'em i delay'em
   const geocodePostalCode = async (postalCode) => {
-    if (geocachRef.current[postalCode]) {
-      return geocachRef.current[postalCode];
-    }
-    try {
-      const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&postalcode=${postalCode}&countrycode=pl&limit=1`
-      );
-      const data = await response.json();
-      if (data.length > 0) {
-        const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-        geocachRef.current[postalCode] = coords;
-        return coords;
+    return new Promise((resolve) => {
+      // Sprawdź cache
+      if (geocachRef.current[postalCode]) {
+        return resolve(geocachRef.current[postalCode]);
       }
-    } catch (e) {
-      console.log('Geocoding error');
-    }
-    return null;
+
+      // Dodaj do kolejki
+      geocodingQueueRef.current.push({ postalCode, resolve });
+
+      // Jeśli nie ma żadnego procesu geocodowania, uruchom
+      if (!isGeocodingRef.current) {
+        processGeocodingQueue();
+      }
+    });
   };
 
+  const processGeocodingQueue = async () => {
+    isGeocodingRef.current = true;
+
+    while (geocodingQueueRef.current.length > 0) {
+      const { postalCode, resolve } = geocodingQueueRef.current.shift();
+
+      try {
+        const response = await fetch(
+          `https://nominatim.openstreetmap.org/search?format=json&postalcode=${postalCode}&countrycode=pl&limit=1`,
+          {
+            headers: {
+              'User-Agent': 'FlexmebleMap/1.0'
+            }
+          }
+        );
+
+        if (response.ok) {
+          const data = await response.json();
+          if (data.length > 0) {
+            const coords = { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+            geocachRef.current[postalCode] = coords;
+            resolve(coords);
+          } else {
+            resolve(null);
+          }
+        } else {
+          resolve(null);
+        }
+      } catch (e) {
+        console.log('Geocoding error for', postalCode);
+        resolve(null);
+      }
+
+      // Delay 1 sekunda między requestami aby uniknąć rate-limitowania
+      await new Promise(r => setTimeout(r, 1000));
+    }
+
+    isGeocodingRef.current = false;
+  };
+
+  // Aktualizuj mapę
   useEffect(() => {
     const updateMap = async () => {
       if (!mapInstanceRef.current) return;
 
+      // Usuń stare markery
       Object.values(markersRef.current).forEach((m) => {
         mapInstanceRef.current.removeLayer(m.marker);
       });
       markersRef.current = {};
+
+      // Przetwórz wszystkie zamówienia
+      const ordersToProcess = [];
 
       for (const [id, order] of Object.entries(orders || {})) {
         if (hiddenOrders.has(id)) continue;
@@ -84,6 +138,11 @@ export default function MapComponent({
           continue;
         }
 
+        ordersToProcess.push({ id, order });
+      }
+
+      // Geocoduj i dodaj markery
+      for (const { id, order } of ordersToProcess) {
         const coords = await geocodePostalCode(order.zip);
         if (!coords) continue;
 
@@ -109,6 +168,7 @@ export default function MapComponent({
             overflow: hidden;
             transition: all 0.2s;
             cursor: pointer;
+            word-break: break-word;
           ">${id}</div>`,
           iconSize: [isHovered ? 50 : 40, isHovered ? 50 : 40],
           className: 'custom-icon',

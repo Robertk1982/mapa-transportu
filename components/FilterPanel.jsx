@@ -1,17 +1,17 @@
 'use client';
 
 const STATUS_COLORS = {
-  'Finiszujemy z produkcją': '#FFC107',
-  'O krok': '#4CAF50',
-  'Produkcja zakończona': '#4CAF50',
-  'Płatność została poprawnie zaksięgowana': '#4CAF50',
-  'Płatność przyjęta': '#2196F3',
-  'Płatność zaakceptowana': '#2196F3',
-  'Twoje zamówienie zostało przekazane do realizacji': '#FF9800',
-  'AA_Corpus': '#FF9800',
-  'AA_Wydane na produkcje': '#FFC107',
-  'Payment received': '#4CAF50',
+  '! !Dostawa dedykowana coraz bliżej. Finiszujemy z produkcją.': '#FFC107',
+  '! !Dostawa paletowa coraz bliżej. Finiszujemy z produkcją.': '#FFC107',
+  '! Dostawa dedykowana o krok. Produkcja zakończona sukcesem.': '#4CAF50',
+  '! Dostawa paletowa - Odpowiedz na wiadomość': '#2196F3',
+  '! Płatność została poprawnie zaksięgowana': '#4CAF50',
+  '! Twoje zamówienie zostało przekazane do realizacji': '#FF9800',
+  'AA_Corpus (realizacja)': '#FF9800',
+  'AA_Wydane na produkcje (realizacja)': '#FFC107',
   'Payment received (Tpay)': '#4CAF50',
+  'Płatność przyjęta': '#4CAF50',
+  'Płatność zaakceptowana': '#4CAF50',
 };
 
 export default function FilterPanel({ 
@@ -95,7 +95,7 @@ export default function FilterPanel({
         <label style={{ display: 'block', fontSize: '12px', fontWeight: 500, marginBottom: '6px', color: '#333' }}>
           📊 Statusy ({selectedStatuses.length}/{uniqueStatuses.length})
         </label>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '6px', maxHeight: '200px', overflowY: 'auto' }}>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '6px', maxHeight: '250px', overflowY: 'auto' }}>
           {uniqueStatuses.map(status => {
             const color = STATUS_COLORS[status] || '#9C27B0';
             const isSelected = selectedStatuses.includes(status);
@@ -127,7 +127,7 @@ export default function FilterPanel({
                   background: color,
                   marginRight: '6px'
                 }} />
-                <span style={{ flex: 1 }}>{status.substring(0, 40)}</span>
+                <span style={{ flex: 1, wordBreak: 'break-word' }}>{status}</span>
               </label>
             );
           })}
@@ -140,19 +140,19 @@ export default function FilterPanel({
         <div style={{ display: 'grid', gridTemplateColumns: '1fr', gap: '4px', fontSize: '11px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#4CAF50' }} />
-            <span>Gotowe</span>
+            <span>Gotowe (Payment received, Produkcja zakończona)</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#FFC107' }} />
-            <span>W produkcji</span>
+            <span>W produkcji (Finiszujemy, Wydane na produkcje)</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#FF9800' }} />
-            <span>W realizacji</span>
+            <span>W realizacji (Corpus, Przekazane do realizacji)</span>
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
             <div style={{ width: '12px', height: '12px', borderRadius: '50%', background: '#2196F3' }} />
-            <span>Płatność przyjęta</span>
+            <span>Pytanie (Odpowiedz na wiadomość)</span>
           </div>
         </div>
       </div>
