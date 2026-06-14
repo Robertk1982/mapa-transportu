@@ -2,23 +2,54 @@
 
 import { useState, useEffect, useRef } from 'react';
 import dynamic from 'next/dynamic';
-import { database } from '@/lib/firebase';
-import { ref, onValue, update, push, remove } from 'firebase/database';
+import { signOut } from 'firebase/auth';
+import { auth, database } from '@/lib/firebase';
+import { ref, onValue, update, set, get } from 'firebase/database';
 import * as XLSX from 'xlsx';
+import Login from '@/components/Login';
+import AdminPanel from '@/components/AdminPanel';
+import FilterPanel, { STATUS_COLORS } from '@/components/FilterPanel';
+import Archive from '@/components/Archive';
 
 const MapComponent = dynamic(() => import('@/components/Map'), { ssr: false });
 
 export default function Home() {
+  const [user, setUser] = useState(null);
+  const [userRole, setUserRole] = useState(null);
   const [orders, setOrders] = useState({});
   const [hiddenOrders, setHiddenOrders] = useState(new Set());
   const [loading, setLoading] = useState(true);
   const [notification, setNotification] = useState('');
   const [showDateModal, setShowDateModal] = useState(false);
   const [missingDateOrders, setMissingDateOrders] = useState([]);
+  const [selectedTransports, setSelectedTransports] = useState(['Dostawa dedykowana Flexmeble', 'Dostawa kurierska paletowa']);
+  const [selectedStatuses, setSelectedStatuses] = useState([]);
+  const [searchId, setSearchId] = useState('');
+  const [showArchive, setShowArchive] = useState(false);
+  const [showAdmin, setShowAdmin] = useState(false);
   const fileInputRef = useRef(null);
   const dateInputsRef = useRef({});
 
+  // Sprawdź login
   useEffect(() => {
+    const unsubscribe = auth.onAuthStateChanged(async (currentUser) => {
+      if (currentUser) {
+        setUser(currentUser);
+        const userRef = ref(database, `users/${currentUser.uid}`);
+        const snapshot = await get(userRef);
+        const userData = snapshot.val();
+        setUserRole(userData);
+      } else {
+        setLoading(false);
+      }
+    });
+    return unsubscribe;
+  }, []);
+
+  // Ładuj zamówienia
+  useEffect(() => {
+    if (!user) return;
+
     const ordersRef = ref(database, 'orders');
     const unsubscribeOrders = onValue(ordersRef, (snapshot) => {
       if (snapshot.exists()) {
@@ -32,39 +63,49 @@ export default function Home() {
     const hiddenRef = ref(database, 'hidden');
     const unsubscribeHidden = onValue(hiddenRef, (snapshot) => {
       if (snapshot.exists()) {
-        setHiddenOrders(new Set(Object.keys(snapshot.val())));
+        const hidden = Object.keys(snapshot.val()).filter(key => snapshot.val()[key]);
+        setHiddenOrders(new Set(hidden));
       } else {
         setHiddenOrders(new Set());
       }
     });
 
+    // Inicjalizuj statusy
+    const allStatuses = [...new Set(Object.values(snapshot?.val() || {}).map(o => o.status).filter(Boolean))];
+    setSelectedStatuses(allStatuses);
+
     return () => {
       unsubscribeOrders();
       unsubscribeHidden();
     };
-  }, []);
+  }, [user]);
+
+  const handleLoginSuccess = (currentUser, userData) => {
+    setUser(currentUser);
+    setUserRole(userData);
+    setLoading(false);
+  };
+
+  const handleLogout = async () => {
+    await signOut(auth);
+    setUser(null);
+    setUserRole(null);
+    setShowAdmin(false);
+  };
 
   const showNotification = (message) => {
     setNotification(message);
     setTimeout(() => setNotification(''), 3000);
   };
 
-  const parseDate = (dateStr) => {
-    if (!dateStr) return null;
-    if (String(dateStr).includes('/')) {
-      const [d, m, y] = String(dateStr).split('/');
-      return new Date(y, m - 1, d);
-    }
-    if (String(dateStr).includes('.')) {
-      const [d, m, y] = String(dateStr).split('.');
-      return new Date(y, m - 1, d);
-    }
-    return new Date(dateStr);
-  };
-
   const handleFileUpload = async (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
+
+    if (!userRole?.canUpload && userRole?.role !== 'admin') {
+      showNotification('❌ Nie masz uprawnień do wczytywania plików');
+      return;
+    }
 
     try {
       const data = await file.arrayBuffer();
@@ -85,7 +126,8 @@ export default function Home() {
         const zip = String(row['Kod pocztowy klienta'] || row['Kod pocztowy'] || '').trim();
         const value = String(row['Wartość zamówienia'] || row['Wartość'] || '0').trim();
 
-        if (!transport.includes('Dostawa dedykowana Flexmeble')) return;
+        const isRelevantTransport = transport.includes('Dostawa dedykowana Flexmeble') || transport.includes('paletowa');
+        if (!isRelevantTransport) return;
         if (!id || !zip) return;
 
         if (hiddenOrders.has(id)) return;
@@ -94,17 +136,17 @@ export default function Home() {
         if (dateRaw) {
           date = String(dateRaw).trim();
         } else {
-          missing.push({ id, zip, value, status });
+          missing.push({ id, zip, value, status, transport });
         }
 
         if (newOrders[id]) {
           if (newOrders[id].status !== status) {
             updatedCount++;
           }
-          newOrders[id] = { zip, date: date || newOrders[id].date, status, value };
+          newOrders[id] = { zip, date: date || newOrders[id].date, status, value, transport };
         } else {
           if (date) {
-            newOrders[id] = { zip, date, status, value };
+            newOrders[id] = { zip, date, status, value, transport };
             addedCount++;
           }
         }
@@ -128,14 +170,14 @@ export default function Home() {
         if (Object.keys(updates).length > 0) {
           await update(ref(database), updates);
         }
-        showNotification(`Plik wczytany - dodano ${addedCount}, zmieniono ${updatedCount} zamówień`);
+        showNotification(`✅ Plik wczytany - dodano ${addedCount}, zmieniono ${updatedCount}`);
       }
 
       if (fileInputRef.current) {
         fileInputRef.current.value = '';
       }
     } catch (error) {
-      showNotification('Błąd: ' + error.message);
+      showNotification('❌ Błąd: ' + error.message);
     }
   };
 
@@ -151,6 +193,7 @@ export default function Home() {
           date: dateVal,
           status: order.status,
           value: order.value,
+          transport: order.transport,
         };
         addedCount++;
       }
@@ -162,25 +205,56 @@ export default function Home() {
 
     setShowDateModal(false);
     setMissingDateOrders([]);
-    showNotification(`Dodano ${addedCount} zamówień z datami`);
+    showNotification(`✅ Dodano ${addedCount} zamówień z datami`);
   };
 
   const handleToggleOrder = async (id) => {
-    if (hiddenOrders.has(id)) {
-      const newHidden = new Set(hiddenOrders);
+    const newHidden = new Set(hiddenOrders);
+    if (newHidden.has(id)) {
       newHidden.delete(id);
-      setHiddenOrders(newHidden);
-      await update(ref(database, 'hidden'), { [id]: false });
     } else {
-      setHiddenOrders(new Set([...hiddenOrders, id]));
-      await update(ref(database, 'hidden'), { [id]: true });
+      newHidden.add(id);
+      // Przenieś do archiwum
+      const order = orders[id];
+      await set(ref(database, `archived/${id}`), order);
     }
+    setHiddenOrders(newHidden);
+    await update(ref(database, 'hidden'), { [id]: newHidden.has(id) });
   };
+
+  if (!user) {
+    return <Login onLoginSuccess={handleLoginSuccess} />;
+  }
+
+  if (showAdmin && userRole?.role === 'admin') {
+    return <AdminPanel currentUser={user} onLogout={handleLogout} />;
+  }
+
+  // Filtruj zamówienia
+  const filteredOrders = Object.fromEntries(
+    Object.entries(orders).filter(([id, order]) => {
+      if (searchId && !id.includes(searchId)) return false;
+      
+      if (selectedTransports.length > 0) {
+        const matchesTransport = selectedTransports.some(t => 
+          (t === 'Dostawa dedykowana Flexmeble' && order.transport?.includes('Dostawa dedykowana')) ||
+          (t === 'Dostawa kurierska paletowa' && order.transport?.includes('paletowa'))
+        );
+        if (!matchesTransport) return false;
+      }
+
+      if (selectedStatuses.length > 0 && !selectedStatuses.includes(order.status)) {
+        return false;
+      }
+
+      return true;
+    })
+  );
 
   if (loading) {
     return (
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', height: '100vh' }}>
-        <p>Ładowanie mapy...</p>
+        <p>Ładowanie aplikacji...</p>
       </div>
     );
   }
@@ -188,28 +262,85 @@ export default function Home() {
   return (
     <div style={{ display: 'flex', height: '100vh', fontFamily: 'system-ui' }}>
       <div style={{ flex: 1, position: 'relative' }}>
-        <MapComponent orders={orders} hiddenOrders={hiddenOrders} />
+        <MapComponent 
+          orders={filteredOrders} 
+          hiddenOrders={hiddenOrders}
+          selectedTransports={selectedTransports}
+          selectedStatuses={selectedStatuses}
+        />
       </div>
 
-      <div style={{ width: '360px', borderLeft: '1px solid #e0e0e0', display: 'flex', flexDirection: 'column', background: '#fff' }}>
+      <div style={{ width: '380px', borderLeft: '1px solid #e0e0e0', display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
         <div style={{ padding: '16px', borderBottom: '1px solid #e0e0e0', background: '#f5f5f5' }}>
-          <h2 style={{ fontSize: '16px', fontWeight: 500, marginBottom: '12px' }}>Dostawa dedykowana</h2>
-          <button
-            onClick={() => fileInputRef.current?.click()}
-            style={{
-              width: '100%',
-              padding: '10px',
-              background: '#2196F3',
-              color: 'white',
-              border: 'none',
-              borderRadius: '6px',
-              cursor: 'pointer',
-              fontWeight: 500,
-              fontSize: '13px',
-            }}
-          >
-            📥 Wczytaj XLS
-          </button>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '12px' }}>
+            <h2 style={{ fontSize: '16px', fontWeight: 500 }}>Dostawa Flexmeble</h2>
+            <div style={{ display: 'flex', gap: '6px' }}>
+              {userRole?.role === 'admin' && (
+                <button
+                  onClick={() => setShowAdmin(!showAdmin)}
+                  style={{
+                    padding: '6px 12px',
+                    background: '#9C27B0',
+                    color: 'white',
+                    border: 'none',
+                    borderRadius: '4px',
+                    cursor: 'pointer',
+                    fontSize: '11px'
+                  }}
+                >
+                  ⚙️
+                </button>
+              )}
+              <button
+                onClick={() => setShowArchive(true)}
+                style={{
+                  padding: '6px 12px',
+                  background: '#FF9800',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '11px'
+                }}
+              >
+                🗂️
+              </button>
+              <button
+                onClick={handleLogout}
+                style={{
+                  padding: '6px 12px',
+                  background: '#F44336',
+                  color: 'white',
+                  border: 'none',
+                  borderRadius: '4px',
+                  cursor: 'pointer',
+                  fontSize: '11px'
+                }}
+              >
+                🚪
+              </button>
+            </div>
+          </div>
+
+          {(userRole?.canUpload || userRole?.role === 'admin') && (
+            <button
+              onClick={() => fileInputRef.current?.click()}
+              style={{
+                width: '100%',
+                padding: '10px',
+                background: '#2196F3',
+                color: 'white',
+                border: 'none',
+                borderRadius: '6px',
+                cursor: 'pointer',
+                fontWeight: 500,
+                fontSize: '13px',
+                marginBottom: '12px'
+              }}
+            >
+              📥 Wczytaj XLS
+            </button>
+          )}
           <input
             ref={fileInputRef}
             type="file"
@@ -219,17 +350,26 @@ export default function Home() {
           />
         </div>
 
+        <div style={{ padding: '12px', borderBottom: '1px solid #e0e0e0', background: '#F9F9F9', overflowY: 'auto', maxHeight: '200px' }}>
+          <FilterPanel
+            selectedTransports={selectedTransports}
+            onTransportChange={setSelectedTransports}
+            selectedStatuses={selectedStatuses}
+            onStatusChange={setSelectedStatuses}
+            searchId={searchId}
+            onSearchChange={setSearchId}
+            orders={orders}
+          />
+        </div>
+
         <div style={{ flex: 1, overflowY: 'auto' }}>
-          {Object.entries(orders).length === 0 ? (
+          {Object.entries(filteredOrders).length === 0 ? (
             <div style={{ padding: '24px', textAlign: 'center', color: '#999', fontSize: '13px' }}>
-              Brak zamówień. Wczytaj plik XLS.
+              Brak zamówień spełniających kryteria
             </div>
           ) : (
-            Object.entries(orders).map(([id, order]) => {
+            Object.entries(filteredOrders).map(([id, order]) => {
               const isHidden = hiddenOrders.has(id);
-              const date = new Date(order.date);
-              const isOverdue = date < new Date();
-
               return (
                 <div
                   key={id}
@@ -256,23 +396,22 @@ export default function Home() {
                         display: 'inline-block',
                         padding: '2px 6px',
                         borderRadius: '3px',
-                        fontSize: '11px',
+                        fontSize: '10px',
                         fontWeight: 500,
                         marginBottom: '4px',
-                        background: '#2196F315',
-                        color: '#2196F3',
+                        background: STATUS_COLORS[order.status] + '20' || '#9C27B015',
+                        color: STATUS_COLORS[order.status] || '#9C27B0',
+                        border: `1px solid ${STATUS_COLORS[order.status] || '#9C27B0'}40`,
+                        maxWidth: '100%',
+                        wordBreak: 'break-word'
                       }}
                     >
-                      {order.status || 'Brak statusu'}
+                      {order.status?.substring(0, 30)}
                     </div>
                     <div style={{ color: '#666', fontSize: '11px', lineHeight: '1.5', marginTop: '4px' }}>
-                      📍 {order.zip}
-                      <br />
-                      📅{' '}
-                      <span style={isOverdue ? { color: '#F44336', fontWeight: 500 } : {}}>
-                        {order.date}
-                        {isOverdue ? ' ⚠️' : ''}
-                      </span>
+                      📍 {order.zip}<br />
+                      📅 {order.date || '-'}<br/>
+                      📦 {order.transport?.includes('Dostawa dedykowana') ? 'Dedykowana' : 'Paletowa'}
                       <span style={{ display: 'block', color: '#2196F3', fontWeight: 500, marginTop: '2px' }}>
                         💰 {parseFloat(String(order.value).replace(',', '.')).toFixed(2)} PLN
                       </span>
@@ -293,13 +432,13 @@ export default function Home() {
             <div style={{ background: '#f5f5f5', padding: '12px', borderRadius: '6px', maxHeight: '200px', overflowY: 'auto', marginBottom: '16px' }}>
               {missingDateOrders.map((order) => (
                 <div key={order.id} style={{ padding: '8px', borderBottom: '1px solid #e0e0e0' }}>
-                  <div style={{ marginBottom: '6px', fontWeight: 500 }}>{order.id}</div>
+                  <div style={{ marginBottom: '6px', fontWeight: 500, fontSize: '12px' }}>{order.id}</div>
                   <input
                     type="date"
                     ref={(el) => {
                       if (el) dateInputsRef.current[order.id] = el;
                     }}
-                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '13px' }}
+                    style={{ width: '100%', padding: '8px', border: '1px solid #ddd', borderRadius: '4px', fontSize: '13px', boxSizing: 'border-box' }}
                   />
                 </div>
               ))}
@@ -339,6 +478,8 @@ export default function Home() {
           </div>
         </div>
       )}
+
+      {showArchive && <Archive onClose={() => setShowArchive(false)} />}
 
       {notification && (
         <div
