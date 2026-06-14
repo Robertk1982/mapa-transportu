@@ -220,7 +220,6 @@ export default function Home() {
       newHidden.delete(id);
     } else {
       newHidden.add(id);
-      // Przenieś do archiwum
       const order = orders[id];
       await set(ref(database, `archived/${id}`), order);
     }
@@ -236,22 +235,26 @@ export default function Home() {
     return <AdminPanel currentUser={user} onLogout={handleLogout} />;
   }
 
-  // Filtruj zamówienia
+  // Filtruj zamówienia - NAPRAWIONE
   const filteredOrders = Object.fromEntries(
     Object.entries(orders).filter(([id, order]) => {
+      // Filtr wyszukiwania
       if (searchId && !id.includes(searchId)) return false;
       
-      if (selectedTransports.length > 0) {
-        const matchesTransport = selectedTransports.some(t => 
-          (t === 'Dostawa dedykowana Flexmeble' && order.transport?.includes('Dostawa dedykowana')) ||
-          (t === 'Dostawa kurierska paletowa' && order.transport?.includes('paletowa'))
-        );
-        if (!matchesTransport) return false;
-      }
-
-      if (selectedStatuses.length > 0 && !selectedStatuses.includes(order.status)) {
+      // Filtr transportu - ZAWSZE STOSUJ
+      const transport = order.transport || '';
+      const isDedykowana = transport.includes('Dostawa dedykowana');
+      const isPaletowa = transport.includes('paletowa');
+      
+      const matchesTransport = selectedTransports.some(t => {
+        if (t === 'Dostawa dedykowana Flexmeble') return isDedykowana;
+        if (t === 'Dostawa kurierska paletowa') return isPaletowa;
         return false;
-      }
+      });
+      if (!matchesTransport) return false;
+
+      // Filtr statusu - ZAWSZE STOSUJ
+      if (!selectedStatuses.includes(order.status)) return false;
 
       return true;
     })
@@ -271,8 +274,6 @@ export default function Home() {
         <MapComponent 
           orders={filteredOrders} 
           hiddenOrders={hiddenOrders}
-          selectedTransports={selectedTransports}
-          selectedStatuses={selectedStatuses}
         />
       </div>
 
@@ -405,7 +406,7 @@ export default function Home() {
                         fontSize: '10px',
                         fontWeight: 500,
                         marginBottom: '4px',
-                        background: STATUS_COLORS[order.status] + '20' || '#9C27B015',
+                        background: (STATUS_COLORS[order.status] || '#9C27B0') + '20',
                         color: STATUS_COLORS[order.status] || '#9C27B0',
                         border: `1px solid ${STATUS_COLORS[order.status] || '#9C27B0'}40`,
                         maxWidth: '100%',

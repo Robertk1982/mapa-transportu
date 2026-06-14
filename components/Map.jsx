@@ -29,12 +29,7 @@ function getStatusColor(status) {
   return '#9C27B0';
 }
 
-export default function MapComponent({ 
-  orders = {}, 
-  hiddenOrders = new Set(),
-  selectedTransports = [],
-  selectedStatuses = []
-}) {
+export default function MapComponent({ orders = {}, hiddenOrders = new Set() }) {
   const mapRef = useRef(null);
   const mapInstanceRef = useRef(null);
   const markersRef = useRef([]);
@@ -62,7 +57,7 @@ export default function MapComponent({
     });
   }, []);
 
-  // Aktualizuj markery
+  // Aktualizuj markery - BEZ FILTROWANIA (page.jsx już filtruje)
   useEffect(() => {
     if (!ready || !mapInstanceRef.current) return;
 
@@ -71,30 +66,8 @@ export default function MapComponent({
     markersRef.current = [];
 
     for (const [id, order] of Object.entries(orders)) {
-      // Ukryte
       if (hiddenOrders.has(id)) continue;
 
-      // Filtr transportu
-      if (selectedTransports.length > 0) {
-        const transport = order.transport || '';
-        const isDedykowana = transport.includes('dedykowana') || transport.includes('Dedykowana');
-        const isPaletowa = transport.includes('paletowa') || transport.includes('Paletowa');
-        
-        const matchesTransport = selectedTransports.some(t => {
-          if (t.includes('dedykowana') || t.includes('Dedykowana')) return isDedykowana;
-          if (t.includes('paletowa') || t.includes('Paletowa')) return isPaletowa;
-          return false;
-        });
-        
-        if (!matchesTransport) continue;
-      }
-
-      // Filtr statusu
-      if (selectedStatuses.length > 0) {
-        if (!selectedStatuses.includes(order.status)) continue;
-      }
-
-      // Współrzędne z geocache
       const zip = order.zip;
       if (!zip) continue;
 
@@ -102,7 +75,6 @@ export default function MapComponent({
       const coords = geocacheRef.current[safeZip] || geocacheRef.current[zip];
       if (!coords) continue;
 
-      // Marker
       const color = getStatusColor(order.status);
       const icon = L.divIcon({
         html: `<div style="background:${color};color:#fff;width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:11px;font-weight:bold;box-shadow:0 2px 6px rgba(0,0,0,0.25);border:2px solid #fff;">${id}</div>`,
@@ -129,7 +101,7 @@ export default function MapComponent({
 
       markersRef.current.push(marker);
     }
-  }, [orders, hiddenOrders, selectedTransports, selectedStatuses, ready]);
+  }, [orders, hiddenOrders, ready]);
 
   return <div ref={mapRef} style={{ width: '100%', height: '100%' }} />;
 }
